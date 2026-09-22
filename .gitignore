@@ -1,0 +1,18 @@
+# secrets - never commit
+.streamlit/secrets.toml
+
+# build artifacts
+weather.db
+weather.db-journal
+weather.db-wal
+weather.db-shm
+
+# old prototype (kept locally, not shipped)
+_archive/
+weatherold.db
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
