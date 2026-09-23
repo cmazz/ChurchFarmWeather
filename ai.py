@@ -66,7 +66,9 @@ def _ask_gemini(prompt: str) -> str:
         url = f"{_API_ROOT}/{model}:generateContent"
         thinking_off = True
 
-        for attempt in range(3):
+        # 2 tries per model, then move on - with 3 models this still covers
+        # transient blips without piling up a long wait on one overloaded model.
+        for attempt in range(2):
             try:
                 resp = requests.post(
                     url,
@@ -115,24 +117,43 @@ def _ask_gemini(prompt: str) -> str:
             last_error = f"{resp.status_code} from {model}: {resp.text[:120]}"
             break  # next model
 
+    if "503" in last_error or "429" in last_error:
+        raise RuntimeError(
+            "Gemini is experiencing high demand across every model this app tries. "
+            "This is on Google's end, not this app - please try again in a minute."
+        )
     raise RuntimeError(f"Gemini is unavailable right now ({last_error}).")
 
 
 def _extract_json(text: str) -> dict:
-    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.DOTALL)
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    return json.loads(match.group(0) if match else text)
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.IGNORECASE | re.DOTALL)
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    try:
+        return json.loads(match.group(0) if match else cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Gemini didn't return a query I could use for that question. "
+            "Try rephrasing it as something about the recorded data."
+        ) from exc
 
 
 def _plan_query(question: str) -> dict:
-    prompt = f"""You convert weather questions into ONE SQLite query.
+    prompt = f"""You convert weather questions into ONE SQLite query over data this
+station has ALREADY RECORDED. You can only answer questions a SQL query over
+that historical data can answer - not future forecasts, not live conditions
+elsewhere, not anything not derivable from the table below.
 
-Return STRICT JSON only:
+If the question fits, return STRICT JSON:
 {{"sql": "<a single SELECT or WITH...SELECT statement, no semicolon>",
   "chart": "line" | "bar" | "none",
   "x": "<column for the x-axis or null>",
   "y": ["<numeric column>", "..."],
   "note": "<one sentence describing what the rows contain>"}}
+
+If it does NOT fit (e.g. it asks for a weather forecast/prediction, or
+anything not answerable from stored history), return STRICT JSON instead:
+{{"error": "<one short, friendly sentence explaining this tool only answers
+questions about recorded history and can't do that>"}}
 
 Rules:
 - SELECT only. No writes, no PRAGMA, no semicolons.
@@ -144,7 +165,15 @@ Rules:
 
 Question: {question}
 """
-    return _extract_json(_ask_gemini(prompt))
+    plan = _extract_json(_ask_gemini(prompt))
+    if plan.get("error"):
+        raise ValueError(plan["error"])
+    if not plan.get("sql"):
+        raise ValueError(
+            "I can only answer questions about recorded weather history - "
+            "try asking about a specific date, month, or trend instead."
+        )
+    return plan
 
 
 def _validate_sql(sql: str) -> str:
