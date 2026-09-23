@@ -18,6 +18,11 @@ STATION_TZ = "America/New_York"
 # and is intentionally git-ignored.
 DB_PATH = str(pathlib.Path(__file__).with_name("weather.db"))
 
+# Station coordinates (Church Farm School, Exton PA), from the WeatherLink
+# station record. Used to look up the National Weather Service forecast grid.
+STATION_LAT = 40.03228
+STATION_LON = -75.59433
+
 # Gemini model(s) for the "Ask" tab. The first is used; the rest are fallbacks
 # tried only if it fails or is overloaded. Both are pinned, non-"latest" models -
 # "gemini-flash-latest" tracks whatever is newest, which in practice has been

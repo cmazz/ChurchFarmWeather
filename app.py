@@ -1,9 +1,13 @@
 """Church Farm School weather dashboard (Streamlit)."""
 from __future__ import annotations
 
+import datetime as dt
+
 import pandas as pd
 import streamlit as st
 
+import normals
+import nws
 import weatherlink
 from build import build
 from db import METRIC_COLUMNS, connect_readonly
@@ -45,6 +49,16 @@ def live_reading() -> tuple[dict | None, str | None]:
         return None, str(exc)
 
 
+@st.cache_data(ttl=1800)
+def forecast_periods() -> list[dict]:
+    return nws.get_periods()
+
+
+@st.cache_data(ttl=3600)
+def historical_normal(day: dt.date) -> dict:
+    return normals.historical_normal(database_path(), day)
+
+
 def _fmt(value, suffix: str) -> str:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return "—"
@@ -54,7 +68,7 @@ def _fmt(value, suffix: str) -> str:
 st.title("⛅ Church Farm School Weather")
 
 history = load_history()
-tab_now, tab_explore, tab_ask = st.tabs(["Now", "Explore", "Ask"])
+tab_now, tab_forecast, tab_explore, tab_ask = st.tabs(["Now", "Forecast", "Explore", "Ask"])
 
 # --------------------------------------------------------------------------- #
 # Now
@@ -84,6 +98,68 @@ with tab_now:
         st.line_chart(recent[["temp_f", "humidity_pct"]])
         st.line_chart(recent[["wind_mph", "pressure_inhg"]])
         st.bar_chart(recent[["rain_in"]])
+
+# --------------------------------------------------------------------------- #
+# Forecast
+# --------------------------------------------------------------------------- #
+with tab_forecast:
+    st.write(
+        "The National Weather Service's actual forecast, next to what's "
+        "*typically* been recorded on this station around each date."
+    )
+    st.caption(
+        "The historical side isn't a prediction - it's the average of what this "
+        "station has recorded within 5 days of that date, across every year on record."
+    )
+
+    try:
+        periods = forecast_periods()
+    except Exception as exc:
+        periods = []
+        st.error(f"Couldn't reach the National Weather Service forecast: {exc}")
+
+    if periods:
+        by_date: dict[dt.date, dict] = {}
+        for p in periods:
+            day = dt.datetime.fromisoformat(p["startTime"]).date()
+            by_date.setdefault(day, {})["day" if p["isDaytime"] else "night"] = p
+
+        for day, entry in list(by_date.items())[:4]:
+            day_p, night_p = entry.get("day"), entry.get("night")
+            normal = historical_normal(day)
+
+            with st.container(border=True):
+                st.markdown(f"**{day.strftime('%A, %B')} {day.day}**")
+                col_nws, col_normal = st.columns(2)
+
+                with col_nws:
+                    st.caption("NWS forecast")
+                    if day_p:
+                        pop = (day_p.get("probabilityOfPrecipitation") or {}).get("value") or 0
+                        st.write(f"High **{day_p['temperature']}°F** · {day_p['shortForecast']}")
+                        st.write(f"{pop}% chance of rain · wind {day_p.get('windSpeed', '—')}")
+                    if night_p:
+                        st.write(f"Low **{night_p['temperature']}°F** overnight")
+
+                with col_normal:
+                    n = normal["window_days"]
+                    st.caption(f"Historical normal (±{n} days, {normal['day_count']} past days)")
+                    if normal["avg_temp_f"] is not None:
+                        st.write(
+                            f"Avg **{normal['avg_temp_f']:g}°F** "
+                            f"(range {normal['min_temp_f']:g}–{normal['max_temp_f']:g}°F)"
+                        )
+                        st.write(f"Rain on {normal['pct_days_with_rain']:g}% of these days historically")
+                    else:
+                        st.write("Not enough historical data for this date yet.")
+
+                if day_p and normal["avg_temp_f"] is not None:
+                    delta = day_p["temperature"] - normal["avg_temp_f"]
+                    if abs(delta) < 1:
+                        st.caption("Right around the historical average for this date.")
+                    else:
+                        direction = "warmer" if delta > 0 else "cooler"
+                        st.caption(f"Forecast high is {abs(delta):.0f}°F {direction} than the historical average.")
 
 # --------------------------------------------------------------------------- #
 # Explore
