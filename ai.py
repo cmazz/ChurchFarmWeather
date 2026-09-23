@@ -30,8 +30,19 @@ Table: observations   (one row per weather reading)
   wind_mph       REAL   wind speed, mph
   pressure_inhg  REAL   barometric pressure, inches of mercury
   rain_in        REAL   rain that fell during the interval ending at ts, inches.
-                        Use SUM(rain_in) for rainfall totals, never AVG(rain_in).
   source         TEXT   'csv' (history, ~30-minute readings) or 'api' (recent)
+
+Rainfall (read carefully, this is the one thing people get wrong):
+- rain_in is a per-reading amount, not a running total, so SUM(rain_in) over a
+  period gives the total rainfall for that period - that's the normal way to
+  answer "how much rain fell" / "average rainfall" / "rainfall" for a period.
+- Never write bare AVG(rain_in) across raw rows - averaging 30-minute amounts
+  is meaningless and almost never what's being asked.
+- If someone genuinely wants a true average (e.g. "average DAILY rainfall in
+  June 2025"), compute it in two steps: SUM(rain_in) GROUPed BY day, then
+  AVG() of those daily sums (a subquery or CTE).
+- When wording is ambiguous ("average rainfall this month"), default to the
+  TOTAL for the period via SUM(rain_in) - do not refuse the question over it.
 
 Notes:
 - Data starts 2019-09-01. Some early rows have NULL temp/humidity/wind.
@@ -150,8 +161,12 @@ If the question fits, return STRICT JSON:
   "y": ["<numeric column>", "..."],
   "note": "<one sentence describing what the rows contain>"}}
 
-If it does NOT fit (e.g. it asks for a weather forecast/prediction, or
-anything not answerable from stored history), return STRICT JSON instead:
+Only return the error form below if the question is fundamentally impossible
+from stored history - asking to predict/forecast the future, or about live
+conditions elsewhere, or anything with no relationship to this table at all.
+A question that's just informally worded (e.g. "average rainfall this month")
+is NOT one of those - work out the most sensible SQL interpretation instead
+of refusing. When genuinely impossible, return STRICT JSON:
 {{"error": "<one short, friendly sentence explaining this tool only answers
 questions about recorded history and can't do that>"}}
 
