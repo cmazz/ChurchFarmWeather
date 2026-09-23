@@ -19,10 +19,12 @@ STATION_TZ = "America/New_York"
 DB_PATH = str(pathlib.Path(__file__).with_name("weather.db"))
 
 # Gemini model(s) for the "Ask" tab. The first is used; the rest are fallbacks
-# tried only if it fails or is overloaded. "gemini-flash-latest" tracks the
-# current Flash model so this keeps working without edits.
+# tried only if it fails or is overloaded. Both are pinned, non-"latest" models -
+# "gemini-flash-latest" tracks whatever is newest, which in practice has been
+# a slow "thinking" model prone to 503s under load; pinned models are faster
+# and more predictable. Revisit this list occasionally as models are retired.
 # Model list: https://ai.google.dev/gemini-api/docs/models
-GEMINI_MODELS = ["gemini-3.5-flash", "gemini-flash-latest"]
+GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite"]
 
 
 def get_secret(name: str, default: str | None = None) -> str | None:
